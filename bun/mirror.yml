@@ -37,21 +37,19 @@ source:
 #   bun-linux-aarch64-musl.zip  interpreter /lib/ld-musl-aarch64.so.1
 #
 # NEITHER is static — each names its own loader in PT_INTERP — so neither
-# covers the other. The glibc keys therefore carry an explicit `+libc.glibc`
-# and a BARE key would be a lie: this is the real split case, unlike the
-# pure-Go mirrors in this fleet whose "musl" builds turn out fully static.
+# covers the other and all four Linux keys carry an explicit libc feature. A
+# BARE key would be a lie: this is the real split case, unlike the pure-Go
+# mirrors in this fleet whose "musl" builds turn out fully static.
 #
-# The musl builds are NOT MIRRORED. They exist, they work, and no CI leg can
-# load them — the full chain is in ../mirror-base.yml above `platforms:`. Short
-# version: they also need libstdc++/libgcc_s, bare Alpine ships neither, the
-# container spec has no package-install hook, and the renderer refuses any
-# non-`*alpine*` image on a `+libc.musl` platform. So `bun-linux-*-musl.zip` is
-# in the deliberately-not-carried list below rather than in `assets:`.
+# The two `+libc.musl` keys are DECLARED BUT HELD BROKEN in ../mirror-base.yml
+# — they resolve real assets and are never built. Short version: the musl build
+# also needs libstdc++/libgcc_s, bare Alpine ships neither, the container spec
+# has no package-install hook, and the renderer accepts no image but a literal
+# `alpine` on a `+libc.musl` platform. Full chain above that file's `platforms:`.
 #
 # ─── Scope (verified against v1.3.10, the oldest in range, and v1.3.14) ─────
 #
 # Upstream also publishes, and this mirror deliberately does not carry:
-#   bun-linux-*-musl.zip — untestable in CI, see the libc gate above
 #   bun-*-baseline.zip   — pre-AVX2/older-CPU rebuilds of the same version
 #   bun-*-profile.zip    — profiling builds
 #   bun-windows-aarch64* — never declared by this repository (see base)
@@ -60,14 +58,18 @@ source:
 # The `$` anchor is what keeps those out: `^bun-linux-x64\.zip$` does not match
 # `bun-linux-x64-musl.zip`, `-baseline.zip` or `-profile.zip`. Resolution was
 # verified BOTH ways on the oldest and newest in-range release — each of the
-# five patterns matches EXACTLY one asset on v1.3.10 and on v1.3.14. A pattern
+# seven patterns matches EXACTLY one asset on v1.3.10 and on v1.3.14. A pattern
 # matching zero is silently skipped, not an error: it would yield a green run
 # with a missing platform.
 assets:
   "linux/amd64+libc.glibc":
     - "^bun-linux-x64\\.zip$"
+  "linux/amd64+libc.musl":
+    - "^bun-linux-x64-musl\\.zip$"
   "linux/arm64+libc.glibc":
     - "^bun-linux-aarch64\\.zip$"
+  "linux/arm64+libc.musl":
+    - "^bun-linux-aarch64-musl\\.zip$"
   darwin/amd64:
     - "^bun-darwin-x64\\.zip$"
   darwin/arm64:
