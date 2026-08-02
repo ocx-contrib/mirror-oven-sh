@@ -40,21 +40,22 @@ not at all.
 
 ## Platforms
 
-`bun` publishes five platform entries: both Linux arches (glibc), both macOS
-arches and `windows/amd64`.
+`bun` declares seven platform entries and **builds four**: `linux/{amd64,arm64}
++libc.glibc`, `darwin/arm64` and `windows/amd64`.
 
-**Linux is glibc-only, and that is a deliberate gap.** Upstream ships a
-separate musl build per arch, and neither Linux build is static — each names
-its own loader in `PT_INTERP`, so the mirrored keys carry an explicit
-`+libc.glibc` and a bare key would be a lie. The musl builds are not mirrored
-because no CI leg can load them: they additionally need `libstdc++.so.6` and
-`libgcc_s.so.1`, bare Alpine ships neither, the container spec has **no
-package-install hook**, and the renderer refuses any non-`*alpine*` image on a
-`+libc.musl` platform (so a libstdc++-bearing Alpine image such as
-`node:22-alpine3.20` — which does run bun — is rejected at spec load). The full
-chain is recorded above `platforms:` in [`mirror-base.yml`](mirror-base.yml).
-Adding musl is two `assets:` regexes and two platform keys, the day `ocx-mirror`
-grows a container setup hook or a `containers[].libc` override.
+Neither Linux build is static — each names its own loader in `PT_INTERP` — so
+every Linux key carries an explicit libc feature and a bare key would be a lie.
+Both **`+libc.musl` keys are declared but held broken** for the whole version
+range: the musl build additionally needs `libstdc++.so.6` and `libgcc_s.so.1`,
+bare Alpine ships neither, the container spec has **no package-install hook**,
+and the renderer classifies libc from the image repository — only a literal
+`alpine` counts as musl, so a libstdc++-bearing Alpine image such as
+`node:22-alpine3.20` (which does run bun) is rejected at spec load. Holding
+them keeps the libc split on record and the platforms visible as 🔒 rows
+instead of silently vanishing. The full chain is recorded above `platforms:` in
+[`mirror-base.yml`](mirror-base.yml); deleting the two `exclude:` blocks is the
+whole reversal, the day `ocx-mirror` grows a container setup hook or a
+`containers[].libc` override.
 
 `darwin/amd64` is **declared but held broken** for the whole version range: bun
 SIGILLs under Rosetta 2 and GitHub has retired native Intel macOS runners, so
