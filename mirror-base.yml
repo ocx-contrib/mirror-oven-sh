@@ -1,0 +1,143 @@
+# Shared base for every spec in this repository (oven-sh).
+#
+# NOT a spec: it has no name/target/source and is never loaded on its own.
+# Everything a package owns — name, target, source, assets, asset_type,
+# metadata, catalog, tests, versions, announce, annotations — stays in that
+# package's own mirror.yml.
+#
+# ⚠️ `extends:` is a SHALLOW merge of top-level keys. A spec that sets a key
+# below replaces that block OUTRIGHT — there is no per-key merge. `platforms:`
+# is where this bites: it carries BOTH the runner matrix and the container
+# legs, so a child that restates it to tweak one runner silently drops every
+# `containers:` entry. Nothing reds — the legs simply stop existing, and every
+# os.features claim in that spec goes back to being merely asserted. Restate
+# `platforms:` IN FULL or not at all.
+
+skip_prereleases: true
+cascade: true
+
+# Carried verbatim from the flat spec this repo grew out of. The fleet default
+# is `date`; `none` is kept here so the port changes the coordinate and nothing
+# else. Bun versions as bare semver (1.3.14) with no `+build` segment, so
+# switching to `date` would be safe whenever the owner wants the fleet rule —
+# it is a one-word change and costs one orphaned digest per already-published
+# version.
+build_timestamp: none
+
+verify:
+  github_asset_digest: true
+
+concurrency:
+  # Bun ships one ~100 MB binary per platform — an order of magnitude larger
+  # than a typical single-binary CLI mirror, but still one file per bundle.
+  max_downloads: 8
+  max_bundles: 4
+  max_pushes: 2
+  rate_limit_ms: 100
+  max_retries: 3
+  compression_threads: 0
+
+# `off`, and it cannot be otherwise here. The scan only looks BELOW an
+# interface PATH entry of the form ${installPath}/<dir>. Bun's zip wraps a
+# single `bun` executable in a `bun-<plat>/` directory, so `strip_components: 1`
+# lands that executable AT the content root and PATH is a bare ${installPath}.
+# `auto`/`verify` is rejected at spec load with exit 65 ("bin_scan is enabled
+# but … declares no interface-visible ${installPath}/<dir> PATH entry"). `off`
+# with a hand-listed `binaries` in metadata.json is the blessed shape for this
+# archive layout.
+bin_scan: off
+
+# ─── Platform matrix ────────────────────────────────────────────────────────
+#
+# `os.features` states what an artifact REQUIRES OF THE HOST, not how it was
+# built. Bun is the split case: upstream ships a SEPARATE glibc and musl build
+# per Linux arch and NEITHER is static — each names its own loader in
+# PT_INTERP, so neither covers the other and BOTH Linux keys carry an explicit
+# libc feature. The measurement is recorded above bun/mirror.yml's `assets:`.
+#
+# Container legs are the only mechanism that turns a libc claim into evidence:
+#   - `+libc.glibc` → ubuntu + fedora, NO alpine. The glibc build cannot load
+#     under musl, so an alpine leg would red on a correct artifact.
+#   - `+libc.musl`  → a musl image only. Same reasoning mirrored.
+#
+# ⚠️ The musl legs run `node:22-alpine3.20`, NOT `alpine:3.20`, and that is
+# deliberate. Bun's musl build needs `libstdc++.so.6` and `libgcc_s.so.1`
+# (DT_NEEDED, measured — see bun/mirror.yml), which BARE ALPINE DOES NOT SHIP:
+#
+#   $ docker run --rm alpine:3.20 /b/bun --version
+#   Error loading shared library libstdc++.so.6: No such file or directory
+#
+# Upstream's own Alpine instructions are `apk add --no-cache libstdc++`, and
+# THE SPEC HAS NO HOOK FOR THAT. A container entry accepts only `image`, `id`
+# and `shell`; a `packages:`/`setup:` key VALIDATES (ContainerConfig does not
+# deny unknown fields) and then renders NOTHING — verified by generating the
+# workflow and grepping it. The renderer emits one `docker run --rm <image> ocx
+# package test …` per test, so there is no persistent container to install into
+# either. Keeping `alpine:3.20` would red both musl legs against a working
+# artifact — a false negative, which is worse than no leg.
+#
+# `node:22-alpine3.20` is Alpine 3.20 (`/etc/alpine-release` → 3.20.6) with
+# libstdc++/libgcc_s preinstalled, official, and multi-arch (amd64 + arm64). It
+# is a musl userland, so it proves exactly what the `+libc.musl` claim asserts.
+# Verified locally: `bun --version` → 1.3.10 and `bun -e 'console.log(2+2)'`
+# → 4 inside it. Swap it back to a bare `alpine:3.20` the day the spec grows a
+# container setup hook.
+# NOTE (2026-08-02): the `+libc.musl` platforms are DELIBERATELY NOT PUBLISHED.
+# bun's musl builds are dynamically linked and additionally need libstdc++.so.6
+# and libgcc_s.so.1, which bare Alpine does not ship. The container spec has no
+# setup hook (`containers[]` accepts only `image` and `shell`), and the renderer
+# infers libc purely from the image basename — `infer_libc_from_image` treats
+# only `alpine*` as musl, so a libstdc++-bearing image like `node:22-alpineX`
+# is rejected as glibc. There is therefore no way to run a musl leg that can
+# actually load the artifact, and the container matrix exists precisely so a
+# libc claim is proven rather than asserted. Publishing glibc only is the honest
+# outcome; add the musl keys once ocx-mirror gains `containers[].libc` (its own
+# source comment anticipates exactly that) or a package-install hook.
+platforms:
+  "linux/amd64+libc.glibc":
+    runner: ubuntu-latest
+    containers:
+      - { image: "ubuntu:24.04", shell: bash }
+      - { image: "fedora:40",    shell: bash }
+  "linux/arm64+libc.glibc":
+    # arm64 container legs run natively — no qemu — so the runner arch must
+    # match the platform or the renderer's guard reds the leg up front.
+    runner: ubuntu-24.04-arm
+    containers:
+      - { image: "ubuntu:24.04", shell: bash }
+      - { image: "fedora:40",    shell: bash }
+  darwin/amd64:
+    runner: macos-14
+    prefix: ["arch", "-x86_64"]
+    # darwin/amd64 is DECLARED but HELD broken across the entire version range.
+    # bun-compiled binaries SIGILL (exit 132) under Rosetta 2 — a native-startup
+    # illegal instruction, proven across mainline, the -baseline asset, AND
+    # BUN_JSC_useJIT=0 (so it is NOT a JIT/AVX2 path disableable by asset/env).
+    # GitHub retired native Intel macOS runners, so the Intel slice cannot be
+    # CI-validated at all. Rather than silently drop it (as opencode did), an
+    # open-ended `severity: broken` exclude keeps the platform VISIBLE as a 🔒
+    # row — a deliberate, documented gap — and is reversible in one block-delete
+    # if native Intel runners or a Rosetta-safe bun build ever return. The Intel
+    # binary still runs fine on real Intel Macs; it just can't be tested here.
+    exclude:
+      - min_version: "0.0.0"   # whole range — every discovered version
+        severity: broken
+        reason: "bun SIGILLs under Rosetta 2; no native Intel macOS runner to CI-test"
+  darwin/arm64:
+    runner: macos-14
+    shell: bash
+  windows/amd64:
+    runner: windows-latest
+    shell: pwsh
+  # No `containers:` on darwin or windows — those runners have no Linux
+  # container engine, and the key is rejected at spec load.
+  #
+  # No `windows/arm64`: upstream DOES publish `bun-windows-aarch64.zip`, but
+  # this repository has never declared the platform and the port is not the
+  # place to widen the published surface. Adding it is a `windows-11-arm`
+  # runner plus one anchored asset regex, whenever the owner wants it.
+
+notify:
+  discord:
+    webhook_secret: OCX_MIRROR_DISCORD_HOOK
+    user_id: "227748867204972545"  # pinged in-message on failures

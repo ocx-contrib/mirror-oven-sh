@@ -1,0 +1,139 @@
+extends: ../mirror-base.yml
+
+name: bun
+
+# Logical index package `oven-sh/bun` at the physical path
+# `ghcr.io/ocx-contrib/oven-sh/bun` — slash segments, never hyphen-flattened.
+# The first segment must be this repo's own GitHub owner: GITHUB_TOKEN only
+# authorises packages owned by the repo the workflow runs in.
+#
+# Succeeds the flat `ocx.sh/bun` coordinate this repository published before the
+# grouped layout, the same way mirror-kitware/cmake succeeds mirror-cmake.
+target:
+  registry: ghcr.io
+  repository: ocx-contrib/oven-sh/bun
+
+source:
+  type: github_release
+  owner: oven-sh
+  repo: bun
+  # Tags: bun-v1.3.14, bun-v1.3.13, … Three fixed digits behind a `bun-v`.
+  tag_pattern: "^bun-v(?P<version>\\d+\\.\\d+\\.\\d+)$"
+
+# ─── libc gate (Phase 3.5) — the evidence, not the conclusion ───────────────
+#
+# Upstream ships a glibc build and a SEPARATE musl build for both Linux arches.
+# Measured 2026-08-02 on the `bun` extracted from the real v1.3.10 zips (and
+# recorded for both arches in ../../.claude/libc-audit-2026-08-01.json):
+#
+#   bun-linux-x64.zip        ELF x86-64, dynamically linked,
+#                            interpreter /lib64/ld-linux-x86-64.so.2
+#                            NEEDED libc.so.6 ld-linux-x86-64.so.2
+#                                   libpthread.so.0 libdl.so.2 libm.so.6
+#   bun-linux-aarch64.zip    interpreter /lib/ld-linux-aarch64.so.1
+#   bun-linux-x64-musl.zip   interpreter /lib/ld-musl-x86_64.so.1
+#                            NEEDED libstdc++.so.6 libc.musl-x86_64.so.1
+#                                   libgcc_s.so.1
+#   bun-linux-aarch64-musl.zip  interpreter /lib/ld-musl-aarch64.so.1
+#
+# NEITHER is static — each names its own loader in PT_INTERP — so neither
+# covers the other and both Linux keys carry an explicit libc feature. This is
+# the real split case, unlike the pure-Go mirrors in this fleet whose "musl"
+# builds turn out fully static and take a BARE key.
+#
+# The musl build additionally needs libstdc++/libgcc_s, which bare Alpine does
+# not ship and `os.features` cannot express. ../mirror-base.yml runs the musl
+# legs on `node:22-alpine3.20` (Alpine 3.20 + libstdc++) for exactly that
+# reason — see the warning block above its `platforms:`.
+#
+# ─── Scope (verified against v1.3.10, the oldest in range, and v1.3.14) ─────
+#
+# Upstream also publishes, and this mirror deliberately does not carry:
+#   bun-*-baseline.zip   — pre-AVX2/older-CPU rebuilds of the same version
+#   bun-*-profile.zip    — profiling builds
+#   bun-windows-aarch64* — never declared by this repository (see base)
+#   SHASUMS256.txt(.asc) — sidecars
+#
+# The `$` anchor is what keeps those out: `^bun-linux-x64\.zip$` does not match
+# `bun-linux-x64-musl.zip`, `-baseline.zip` or `-profile.zip`. Resolution was
+# verified BOTH ways on the oldest and newest in-range release — each of the
+# seven patterns matches EXACTLY one asset on v1.3.10 and on v1.3.14. A pattern
+# matching zero is silently skipped, not an error: it would yield a green run
+# with a missing platform.
+# NOTE (2026-08-02): the `+libc.musl` platforms are DELIBERATELY NOT PUBLISHED.
+# bun's musl builds are dynamically linked and additionally need libstdc++.so.6
+# and libgcc_s.so.1, which bare Alpine does not ship. The container spec has no
+# setup hook (`containers[]` accepts only `image` and `shell`), and the renderer
+# infers libc purely from the image basename — `infer_libc_from_image` treats
+# only `alpine*` as musl, so a libstdc++-bearing image like `node:22-alpineX`
+# is rejected as glibc. There is therefore no way to run a musl leg that can
+# actually load the artifact, and the container matrix exists precisely so a
+# libc claim is proven rather than asserted. Publishing glibc only is the honest
+# outcome; add the musl keys once ocx-mirror gains `containers[].libc` (its own
+# source comment anticipates exactly that) or a package-install hook.
+assets:
+  "linux/amd64+libc.glibc":
+    - "^bun-linux-x64\\.zip$"
+  "linux/arm64+libc.glibc":
+    - "^bun-linux-aarch64\\.zip$"
+  darwin/amd64:
+    - "^bun-darwin-x64\\.zip$"
+  darwin/arm64:
+    - "^bun-darwin-aarch64\\.zip$"
+  windows/amd64:
+    - "^bun-windows-x64\\.zip$"
+
+asset_type:
+  # Every asset is a zip wrapping ONE executable in a `bun-<platform>/`
+  # directory (`bun-linux-x64/bun`, `bun-linux-x64-musl/bun`, …) — verified by
+  # `unzip -l` on the real v1.3.10 archives. Stripping that wrapper lands `bun`
+  # at the bundle content root, which is why PATH is a bare ${installPath} and
+  # `bin_scan` is `off` in ../mirror-base.yml.
+  type: archive
+  strip_components: 1
+
+metadata:
+  default: metadata.json
+
+catalog:
+  # Resolves against this spec's own directory (unlike `tests.script`, which is
+  # repository-root-relative). The logo lives here rather than at the repo root
+  # because a repo-root logo.* sits in no workflow's `paths:` filter —
+  # replacing it would publish nothing until some unrelated edit happened to
+  # fire.
+  logo: logo.svg
+
+versions:
+  min: "1.3.10"
+  new_per_run: 5
+  poll_interval: "0 */6 * * *"
+
+tests:
+  # `script:` resolves from the REPOSITORY ROOT — unlike `metadata.default` and
+  # `catalog.logo` above, which resolve against this spec's own directory.
+  - name: smoke
+    script: bun/tests/smoke.star
+
+annotations:
+  # From the Phase 1.5 license gate. `gh api repos/oven-sh/bun/license` answers
+  # `NOASSERTION` — GitHub cannot match the file, so it was classified BY HAND
+  # against the LICENSE text, which is NOT plain MIT:
+  #
+  #   "Bun itself is MIT-licensed."
+  #   "Bun statically links JavaScriptCore (and WebKit) which is LGPL-2
+  #    licensed. WebCore files from WebKit are also licensed under LGPL2."
+  #   linked-library table: `tinycc` -> LGPL v2.1
+  #
+  # The gate says classify by the MOST RESTRICTIVE license covering bytes we
+  # actually ship, and these are statically linked INTO the mirrored binary.
+  # That is weak copyleft -> PROCEED WITH CONDITIONS: the per-version
+  # Corresponding Source pointers are recorded in ../NOTICE.md, and the
+  # relinking duty is satisfied because we republish the upstream binary
+  # byte-for-byte and upstream documents the relink procedure.
+  org.opencontainers.image.licenses: "MIT AND LGPL-2.0-only AND LGPL-2.1-only"
+
+announce:
+  # Spelled out, not derived from target.repository — the logical name and the
+  # physical path are related by convention only.
+  package: oven-sh/bun
+  fork: ocx-contrib/index
