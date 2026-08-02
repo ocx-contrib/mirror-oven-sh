@@ -60,39 +60,34 @@ bin_scan: off
 #     under musl, so an alpine leg would red on a correct artifact.
 #   - `+libc.musl`  → a musl image only. Same reasoning mirrored.
 #
-# ⚠️ The musl legs run `node:22-alpine3.20`, NOT `alpine:3.20`, and that is
-# deliberate. Bun's musl build needs `libstdc++.so.6` and `libgcc_s.so.1`
-# (DT_NEEDED, measured — see bun/mirror.yml), which BARE ALPINE DOES NOT SHIP:
+# ⚠️ ONLY THE GLIBC KEYS ARE DECLARED. Upstream ships perfectly good musl
+# builds, and this mirror does not carry them — deliberately, because no musl
+# leg can be made to load them. The chain, measured 2026-08-02:
 #
-#   $ docker run --rm alpine:3.20 /b/bun --version
-#   Error loading shared library libstdc++.so.6: No such file or directory
+#   1. bun's musl build additionally needs `libstdc++.so.6` and `libgcc_s.so.1`
+#      (DT_NEEDED — see bun/mirror.yml), which BARE ALPINE DOES NOT SHIP:
+#        $ docker run --rm alpine:3.20 /b/bun --version
+#        Error loading shared library libstdc++.so.6: No such file or directory
+#      Upstream's own Alpine instructions are `apk add --no-cache libstdc++`.
+#   2. THE SPEC HAS NO HOOK FOR THAT. A container entry accepts `image`, `id`
+#      and `shell`; a `packages:`/`setup:` key VALIDATES (ContainerConfig does
+#      not deny unknown fields) and then renders NOTHING — verified by
+#      generating the workflow and grepping it. The renderer emits one
+#      `docker run --rm <image> ocx package test …` PER TEST, so there is no
+#      persistent container to install into either.
+#   3. Nor can the image be swapped for a musl one that already carries
+#      libstdc++. The renderer infers libc from the image's last path segment —
+#      only `*alpine*` counts as musl — so `node:22-alpine3.20` (which IS
+#      Alpine 3.20 with libstdc++, and does run bun) is rejected at spec load:
+#        container image 'node:22-alpine3.20' is libc.glibc, but the platform
+#        declares libc.musl — the leg would run without testing the libc claim
 #
-# Upstream's own Alpine instructions are `apk add --no-cache libstdc++`, and
-# THE SPEC HAS NO HOOK FOR THAT. A container entry accepts only `image`, `id`
-# and `shell`; a `packages:`/`setup:` key VALIDATES (ContainerConfig does not
-# deny unknown fields) and then renders NOTHING — verified by generating the
-# workflow and grepping it. The renderer emits one `docker run --rm <image> ocx
-# package test …` per test, so there is no persistent container to install into
-# either. Keeping `alpine:3.20` would red both musl legs against a working
-# artifact — a false negative, which is worse than no leg.
-#
-# `node:22-alpine3.20` is Alpine 3.20 (`/etc/alpine-release` → 3.20.6) with
-# libstdc++/libgcc_s preinstalled, official, and multi-arch (amd64 + arm64). It
-# is a musl userland, so it proves exactly what the `+libc.musl` claim asserts.
-# Verified locally: `bun --version` → 1.3.10 and `bun -e 'console.log(2+2)'`
-# → 4 inside it. Swap it back to a bare `alpine:3.20` the day the spec grows a
-# container setup hook.
-# NOTE (2026-08-02): the `+libc.musl` platforms are DELIBERATELY NOT PUBLISHED.
-# bun's musl builds are dynamically linked and additionally need libstdc++.so.6
-# and libgcc_s.so.1, which bare Alpine does not ship. The container spec has no
-# setup hook (`containers[]` accepts only `image` and `shell`), and the renderer
-# infers libc purely from the image basename — `infer_libc_from_image` treats
-# only `alpine*` as musl, so a libstdc++-bearing image like `node:22-alpineX`
-# is rejected as glibc. There is therefore no way to run a musl leg that can
-# actually load the artifact, and the container matrix exists precisely so a
-# libc claim is proven rather than asserted. Publishing glibc only is the honest
-# outcome; add the musl keys once ocx-mirror gains `containers[].libc` (its own
-# source comment anticipates exactly that) or a package-install hook.
+# That leaves declaring `+libc.musl` with a leg that CANNOT load the artifact
+# (a false red on a working binary) or with no leg at all (a claim that is
+# merely asserted — the exact thing the container matrix exists to prevent).
+# Publishing glibc only is the honest third option. Add the four musl entries —
+# two `assets:` regexes, two platform keys on `alpine:3.20` — the day ocx-mirror
+# grows a container package-install hook or a `containers[].libc` override.
 platforms:
   "linux/amd64+libc.glibc":
     runner: ubuntu-latest
