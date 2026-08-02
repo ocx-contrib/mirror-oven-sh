@@ -60,9 +60,11 @@ bin_scan: off
 #     under musl, so an alpine leg would red on a correct artifact.
 #   - `+libc.musl`  → a musl image only. Same reasoning mirrored.
 #
-# ⚠️ ONLY THE GLIBC KEYS ARE DECLARED. Upstream ships perfectly good musl
-# builds, and this mirror does not carry them — deliberately, because no musl
-# leg can be made to load them. The chain, measured 2026-08-02:
+# ⚠️ BOTH `+libc.musl` KEYS ARE DECLARED BUT HELD BROKEN across the whole
+# version range — same shape as darwin/amd64 below, and for the same reason: a
+# platform that is real upstream but permanently untestable here stays VISIBLE
+# as a 🔒 row rather than being silently dropped. The chain, measured
+# 2026-08-02:
 #
 #   1. bun's musl build additionally needs `libstdc++.so.6` and `libgcc_s.so.1`
 #      (DT_NEEDED — see bun/mirror.yml), which BARE ALPINE DOES NOT SHIP:
@@ -76,24 +78,32 @@ bin_scan: off
 #      `docker run --rm <image> ocx package test …` PER TEST, so there is no
 #      persistent container to install into either.
 #   3. Nor can the image be swapped for a musl one that already carries
-#      libstdc++. The renderer infers libc from the image's last path segment —
-#      only `*alpine*` counts as musl — so `node:22-alpine3.20` (which IS
-#      Alpine 3.20 with libstdc++, and does run bun) is rejected at spec load:
+#      libstdc++. The renderer classifies libc from the image REPOSITORY, and
+#      only a literal `alpine` counts as musl — so `node:22-alpine3.20` (which
+#      IS Alpine 3.20 with libstdc++, and does run bun) is rejected at spec
+#      load, as is `alpine/k8s`:
 #        container image 'node:22-alpine3.20' is libc.glibc, but the platform
 #        declares libc.musl — the leg would run without testing the libc claim
 #
-# That leaves declaring `+libc.musl` with a leg that CANNOT load the artifact
-# (a false red on a working binary) or with no leg at all (a claim that is
-# merely asserted — the exact thing the container matrix exists to prevent).
-# Publishing glibc only is the honest third option. Add the four musl entries —
-# two `assets:` regexes, two platform keys on `alpine:3.20` — the day ocx-mirror
-# grows a container package-install hook or a `containers[].libc` override.
+# So the leg keeps the correct `alpine:3.20` image and the exclude keeps it
+# from ever running against it. The libc split stays on the record, the claim
+# is never falsely asserted as verified, and nothing reds. Delete the two
+# `exclude:` blocks the day ocx-mirror grows a container package-install hook
+# or a `containers[].libc` override — that is the whole reversal.
 platforms:
   "linux/amd64+libc.glibc":
     runner: ubuntu-latest
     containers:
       - { image: "ubuntu:24.04", shell: bash }
       - { image: "fedora:40",    shell: bash }
+  "linux/amd64+libc.musl":
+    runner: ubuntu-latest
+    containers:
+      - { image: "alpine:3.20", shell: sh }
+    exclude:
+      - min_version: "0.0.0"   # whole range — every discovered version
+        severity: broken
+        reason: "musl build needs libstdc++/libgcc_s; bare alpine lacks them and the spec has no container setup hook"
   "linux/arm64+libc.glibc":
     # arm64 container legs run natively — no qemu — so the runner arch must
     # match the platform or the renderer's guard reds the leg up front.
@@ -101,6 +111,14 @@ platforms:
     containers:
       - { image: "ubuntu:24.04", shell: bash }
       - { image: "fedora:40",    shell: bash }
+  "linux/arm64+libc.musl":
+    runner: ubuntu-24.04-arm
+    containers:
+      - { image: "alpine:3.20", shell: sh }
+    exclude:
+      - min_version: "0.0.0"
+        severity: broken
+        reason: "musl build needs libstdc++/libgcc_s; bare alpine lacks them and the spec has no container setup hook"
   darwin/amd64:
     runner: macos-14
     prefix: ["arch", "-x86_64"]
