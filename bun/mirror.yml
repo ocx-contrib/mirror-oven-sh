@@ -63,17 +63,6 @@ source:
 # five patterns matches EXACTLY one asset on v1.3.10 and on v1.3.14. A pattern
 # matching zero is silently skipped, not an error: it would yield a green run
 # with a missing platform.
-# NOTE (2026-08-02): the `+libc.musl` platforms are DELIBERATELY NOT PUBLISHED.
-# bun's musl builds are dynamically linked and additionally need libstdc++.so.6
-# and libgcc_s.so.1, which bare Alpine does not ship. The container spec has no
-# setup hook (`containers[]` accepts only `image` and `shell`), and the renderer
-# infers libc purely from the image basename — `infer_libc_from_image` treats
-# only `alpine*` as musl, so a libstdc++-bearing image like `node:22-alpineX`
-# is rejected as glibc. There is therefore no way to run a musl leg that can
-# actually load the artifact, and the container matrix exists precisely so a
-# libc claim is proven rather than asserted. Publishing glibc only is the honest
-# outcome; add the musl keys once ocx-mirror gains `containers[].libc` (its own
-# source comment anticipates exactly that) or a package-install hook.
 assets:
   "linux/amd64+libc.glibc":
     - "^bun-linux-x64\\.zip$"
