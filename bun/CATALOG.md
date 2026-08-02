@@ -12,6 +12,12 @@ Bun is an incredibly fast JavaScript runtime, bundler, test runner, and package 
 
 - **bun** — JavaScript/TypeScript runtime, package manager, bundler, and test runner
 
+## Platform support
+
+Linux builds are **glibc**; Alpine/musl is not mirrored. macOS on Apple silicon
+is fully supported — the Intel slice is published but cannot be CI-validated
+(bun SIGILLs under Rosetta 2), so treat it as untested. Windows is x64 only.
+
 ## Links
 
 - [Bun Documentation](https://bun.sh/docs)
