@@ -60,36 +60,29 @@ bin_scan: off
 #     under musl, so an alpine leg would red on a correct artifact.
 #   - `+libc.musl`  → a musl image only. Same reasoning mirrored.
 #
-# ⚠️ BOTH `+libc.musl` KEYS ARE DECLARED BUT HELD BROKEN across the whole
-# version range — same shape as darwin/amd64 below, and for the same reason: a
-# platform that is real upstream but permanently untestable here stays VISIBLE
-# as a 🔒 row rather than being silently dropped. The chain, measured
-# 2026-08-02:
+# Both musl legs additionally need `containers[].setup` (ocx-mirror 0.5.1+).
+# bun's musl build is dynamically linked and its DT_NEEDED names two libraries
+# bare Alpine does not ship, so the leg cannot even load the artifact unstocked
+# — measured on the real v1.3.14 bundle, 2026-08-02:
 #
-#   1. bun's musl build additionally needs `libstdc++.so.6` and `libgcc_s.so.1`
-#      (DT_NEEDED — see bun/mirror.yml), which BARE ALPINE DOES NOT SHIP:
-#        $ docker run --rm alpine:3.20 /b/bun --version
-#        Error loading shared library libstdc++.so.6: No such file or directory
-#      Upstream's own Alpine instructions are `apk add --no-cache libstdc++`.
-#   2. THE SPEC HAS NO HOOK FOR THAT. A container entry accepts `image`, `id`
-#      and `shell`; a `packages:`/`setup:` key VALIDATES (ContainerConfig does
-#      not deny unknown fields) and then renders NOTHING — verified by
-#      generating the workflow and grepping it. The renderer emits one
-#      `docker run --rm <image> ocx package test …` PER TEST, so there is no
-#      persistent container to install into either.
-#   3. Nor can the image be swapped for a musl one that already carries
-#      libstdc++. The renderer classifies libc from the image REPOSITORY, and
-#      only a literal `alpine` counts as musl — so `node:22-alpine3.20` (which
-#      IS Alpine 3.20 with libstdc++, and does run bun) is rejected at spec
-#      load, as is `alpine/k8s`:
-#        container image 'node:22-alpine3.20' is libc.glibc, but the platform
-#        declares libc.musl — the leg would run without testing the libc claim
+#   $ docker run --rm -v …:/pkg alpine:3.20 /pkg/bun --version
+#   Error loading shared library libstdc++.so.6: No such file or directory (needed by /pkg/bun)
+#   Error loading shared library libgcc_s.so.1: No such file or directory (needed by /pkg/bun)
+#   … 50+ `Error relocating` lines; exit 127
 #
-# So the leg keeps the correct `alpine:3.20` image and the exclude keeps it
-# from ever running against it. The libc split stays on the record, the claim
-# is never falsely asserted as verified, and nothing reds. Delete the two
-# `exclude:` blocks the day ocx-mirror grows a container package-install hook
-# or a `containers[].libc` override — that is the whole reversal.
+#   $ docker run --rm -v …:/pkg alpine:3.20 \
+#       sh -c 'apk add --no-cache libstdc++; /pkg/bun --version'
+#   1.3.14                                                    # exit 0
+#
+# ONE `apk add` covers both gaps: the `libstdc++` package depends on `libgcc`,
+# so both `Installing libgcc` and `Installing libstdc++` come from that line.
+# It is also upstream's own documented Alpine prerequisite. Verified identically
+# on arm64 (`bun-linux-aarch64-musl`, same two NEEDED entries, `1.3.14` under an
+# emulated `--platform linux/arm64` alpine:3.20 with the same setup line).
+#
+# The claim these legs now make is the honest narrow one: bun's musl build runs
+# on stock alpine:3.20 PLUS libstdc++. Keep it to that one line — a fatter image
+# or a longer setup list would convert a real red into a false green.
 platforms:
   "linux/amd64+libc.glibc":
     runner: ubuntu-latest
@@ -99,11 +92,10 @@ platforms:
   "linux/amd64+libc.musl":
     runner: ubuntu-latest
     containers:
-      - { image: "alpine:3.20", shell: sh }
-    exclude:
-      - min_version: "0.0.0"   # whole range — every discovered version
-        severity: broken
-        reason: "musl build needs libstdc++/libgcc_s; bare alpine lacks them and the spec has no container setup hook"
+      - image: "alpine:3.20"
+        shell: sh
+        setup: &alpine-libstdcxx
+          - apk add --no-cache libstdc++
   "linux/arm64+libc.glibc":
     # arm64 container legs run natively — no qemu — so the runner arch must
     # match the platform or the renderer's guard reds the leg up front.
@@ -114,11 +106,9 @@ platforms:
   "linux/arm64+libc.musl":
     runner: ubuntu-24.04-arm
     containers:
-      - { image: "alpine:3.20", shell: sh }
-    exclude:
-      - min_version: "0.0.0"
-        severity: broken
-        reason: "musl build needs libstdc++/libgcc_s; bare alpine lacks them and the spec has no container setup hook"
+      - image: "alpine:3.20"
+        shell: sh
+        setup: *alpine-libstdcxx
   darwin/amd64:
     runner: macos-14
     prefix: ["arch", "-x86_64"]

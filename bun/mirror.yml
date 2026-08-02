@@ -41,11 +41,10 @@ source:
 # BARE key would be a lie: this is the real split case, unlike the pure-Go
 # mirrors in this fleet whose "musl" builds turn out fully static.
 #
-# The two `+libc.musl` keys are DECLARED BUT HELD BROKEN in ../mirror-base.yml
-# — they resolve real assets and are never built. Short version: the musl build
-# also needs libstdc++/libgcc_s, bare Alpine ships neither, the container spec
-# has no package-install hook, and the renderer accepts no image but a literal
-# `alpine` on a `+libc.musl` platform. Full chain above that file's `platforms:`.
+# The musl build additionally needs libstdc++/libgcc_s, which bare Alpine does
+# not ship — so both `+libc.musl` legs carry `containers[].setup: apk add
+# --no-cache libstdc++` in ../mirror-base.yml. The before/after measurement is
+# recorded above that file's `platforms:`.
 #
 # ─── Scope (verified against v1.3.10, the oldest in range, and v1.3.14) ─────
 #
