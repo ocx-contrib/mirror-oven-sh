@@ -110,7 +110,7 @@ platforms:
         shell: sh
         setup: *alpine-libstdcxx
   darwin/amd64:
-    runner: macos-14
+    runner: macos-15
     prefix: ["arch", "-x86_64"]
     # darwin/amd64 is DECLARED but HELD broken across the entire version range.
     # bun-compiled binaries SIGILL (exit 132) under Rosetta 2 — a native-startup
@@ -127,7 +127,7 @@ platforms:
         severity: broken
         reason: "bun SIGILLs under Rosetta 2; no native Intel macOS runner to CI-test"
   darwin/arm64:
-    runner: macos-14
+    runner: macos-15
     shell: bash
   windows/amd64:
     runner: windows-latest
